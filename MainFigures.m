@@ -9,7 +9,7 @@ Solving the ODE and PDE models
 
 Required the function 'ODE_optimi'
     function[G_EDO_Global,para_EDO,t,pars,pars_ci,Scale_ODE,NormDiffEDO,Sc_ODE,Sm_ODE]=...
-    ODE_optimi(x_data,y_data,InitialMerozoites,r0,NbStage,beta,...
+    ODE_optimi(T,Nt,dt,x_data,y_data,InitialMerozoites,r0,NbStage,beta,...
     Delta0,mStarM,mStarC,gamma_r,gamma_m,gamma_s,mu_m,mu_sd,mu_rm,mu_ms,...
     Lambda0,r)
 
@@ -24,6 +24,7 @@ gamma_r;gamma_m;gamma_s= RBCs preference coef;
         
         %}
 
+%Here are some fixed parameters
 Delta0=16*24; mStarM=20.4*10^6; mStarC=2755*10^3;
 mu_m=48/24;mu_x=0.00833/24;
 mu_sd=1/(48);mu_rm=1/(36);mu_ms=1/(116.5*24);
@@ -31,6 +32,15 @@ r=16;
 r0=0.95; 
 mu_bar=10;
 Lambda0=1.73*10^6;
+
+T=40*24;%Time of integration
+Nt=10*T;%Number of points on [0,T]
+dt=T/Nt;%Time step. Here, Nt is set such that the time step dt=0.1. 
+%Small dt is necessary for the stability of the implicit/explicit scheme
+
+a_max=2.47*24;%max age of pRBCS
+Na=590;%number of points on [0,a_max]
+da=a_max/Na;%age step
 
 %RBCs preference for P. Falciparum
 gamma_r=1; gamma_m=1; gamma_s=1;
@@ -40,26 +50,33 @@ Data=xlsread('Patient_Data.xlsx');
 seques_time=48;
 InitialMerozoites=10^7;
 Name='Patient name';
-VectNbStage=[1,3,12];
-beta=(6.2734*10^-9)/24;
 
-%Solving the ODE systems 
+%vectors for the number K of stages for the EDO model
+VectNbStage=[1,40,100,150];
+
+beta=(6.2734*10^-9)/24;%Infection rate of uRBC
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%Solving the ODE systems with one stage (k=1)
+%%%%%%%%%%%%%%%%%%%%%%%%%%
 x_data=Data(:,1); y_data=Data(:,2); 
-NbStage=VectNbStage(1);
-[G_EDO_Global,para_EDO,t_EDO,pars,pars_ci,Scale_ODE,NormDiffEDO,Sc_ODE,Sm_ODE]=...
-    ODE_optimi(x_data,y_data,InitialMerozoites,r0,NbStage,beta,...
+NbStage=VectNbStage(1);%the number of stage (k=1)
+%Fitting and solving the ODE model with the function 'ODE_optimi'
+[G_EDO_Global,para_EDO,t_EDO,pars,pars_ci,Scale_ODE,Sc_ODE,Sm_ODE]=...
+    ODE_optimi(T,Nt,dt,x_data,y_data,InitialMerozoites,r0,NbStage,beta,...
     Delta0,mStarM,mStarC,gamma_r,gamma_m,gamma_s,mu_m,mu_sd,mu_rm,mu_ms,...
     Lambda0,r);
+%here are estimated parameters
 mu_p_EDO=pars(1);
 mu_g_EDO=pars(2);
-%estimated parameters for the ODE are used for the PDE system
+%NOTE: above estimated parameters for the ODE are used for the PDE system
 mu_g=mu_g_EDO;
 AlphaG_ODE = (1-r0)*Scale_ODE;
 r0=1-AlphaG_ODE/Scale_ODE;
 
 
 %For figure's legend etc ....
-PlotStyle={'--k',':k','-.k'};
+PlotStyle={'--k',':k','-.k','--r'};
 TextLegendGameto={};
 TextLegendGameto{1}='PDE prediction';
 for iv=1:length(VectNbStage)
@@ -72,49 +89,53 @@ for iv=1:length(VectNbStage)
     TextLegendParaEDO{iv+length(VectNbStage)}=['Gametocytemia$(K=',num2str(VectNbStage(iv)),')$'];
 end
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %Solving the PDE system with an Euler explicit method
-a_max=2.47*24;
-T=40*24; Nt=10*T; dt=T/Nt; Na=590; da=a_max/Na; 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 Dn0=floor(Delta0/dt);Sam=0;
 
-    function[y]=mu(a)
-        if a<seques_time
-            y=0;
-        else, y=mu_bar;
-        end
+%RBC'srupture function
+function[y]=mu(a)
+    if a<seques_time
+        y=0;
+    else, y=mu_bar;
     end
+end
 
-    function[y]=state(Lambda,Rr,Rm,Rs,m,P)
-       
-        
-        Mat1=[0,0,0,0,0;1,-mu_rm,0,0,0;0,mu_rm,-mu_ms,0,0;0,0,mu_ms,-mu_sd,0;0,0,0,0,-mu_m-(ac+am)];
-         Mat2=zeros(Na,Na);
-         for j=2:Na
-             Mat2(j,j)=-(1/da+mu(j*da)+mu_x);
-             Mat2(j,j-1)=1/da;
-         end
-         Mat2(1,1)=-(1/da+mu(da)+mu_x);
-         Mat=zeros(Na+5,Na+5);
-         Mat(1:5,1:5)=Mat1; Mat(6:Na+5,6:Na+5)=Mat2;
-        phi=Lambda0-Lambda+mu_sd*Rs+beta*(gamma_r*Rr+gamma_m*Rm+gamma_s*Rs)*m;
-        FF=zeros(5+Na,1);
-        FF(1)=0; FF(2)=-beta*gamma_r*Rr*m; FF(3)=-beta*gamma_m*Rm*m; FF(4)=-beta*gamma_s*Rs*m;
-         P1=[beta*(gamma_r*Rr+gamma_m*Rm+gamma_s*Rs)*m;P];
-        %yy1=zeros(1,Na);
-        s1=r*mu(0)*beta*(gamma_r*Rr+gamma_m*Rm+gamma_s*Rs)*m...
-      +r*mu(da*Na)*P1(Na+1)+4*r*mu((Na-1)*da)*P1(Na);
-        for j=1:Na/2
-            s1=s1+2*r*mu(2*j*da)*P1(2*j+1)+4*r*mu((2*j-1)*da)*P1(2*j);
-        end
-        FF(5)=r0*s1*da/3-beta*(gamma_r*Rr+gamma_m*Rm+gamma_s*Rs)*m;
-         FF(6)=1/da*beta*(gamma_r*Rr+gamma_m*Rm+gamma_s*Rs)*m;
-        y=Mat*[Lambda;Rr;Rm;Rs;m;P]+FF;
+%State system for th PDE model
+function[y]=state(Lambda,Rr,Rm,Rs,m,P)
+
+
+    Mat1=[0,0,0,0,0;1,-mu_rm,0,0,0;0,mu_rm,-mu_ms,0,0;0,0,mu_ms,-mu_sd,0;0,0,0,0,-mu_m-(ac+am)];
+     Mat2=zeros(Na,Na);
+     for j=2:Na
+         Mat2(j,j)=-(1/da+mu(j*da)+mu_x);
+         Mat2(j,j-1)=1/da;
+     end
+     Mat2(1,1)=-(1/da+mu(da)+mu_x);
+     Mat=zeros(Na+5,Na+5);
+     Mat(1:5,1:5)=Mat1; Mat(6:Na+5,6:Na+5)=Mat2;
+    phi=Lambda0-Lambda+mu_sd*Rs+beta*(gamma_r*Rr+gamma_m*Rm+gamma_s*Rs)*m;
+    FF=zeros(5+Na,1);
+    FF(1)=0; FF(2)=-beta*gamma_r*Rr*m; FF(3)=-beta*gamma_m*Rm*m; FF(4)=-beta*gamma_s*Rs*m;
+     P1=[beta*(gamma_r*Rr+gamma_m*Rm+gamma_s*Rs)*m;P];
+    %yy1=zeros(1,Na);
+    s1=r*mu(0)*beta*(gamma_r*Rr+gamma_m*Rm+gamma_s*Rs)*m...
+  +r*mu(da*Na)*P1(Na+1)+4*r*mu((Na-1)*da)*P1(Na);
+    for j=1:Na/2
+        s1=s1+2*r*mu(2*j*da)*P1(2*j+1)+4*r*mu((2*j-1)*da)*P1(2*j);
     end
+    FF(5)=r0*s1*da/3-beta*(gamma_r*Rr+gamma_m*Rm+gamma_s*Rs)*m;
+     FF(6)=1/da*beta*(gamma_r*Rr+gamma_m*Rm+gamma_s*Rs)*m;
+    y=Mat*[Lambda;Rr;Rm;Rs;m;P]+FF;
+end
 
-
+%cerating state variables
 Lambda=zeros(1,Nt+1); Rr=zeros(1,Nt+1); Rm=zeros(1,Nt+1); Rs=zeros(1,Nt+1); para1=Rs;
 P=zeros(Na+1,Nt+1); m=zeros(1,Nt+1);para=m; ring=zeros(1,Nt+1);tropho=zeros(1,Nt+1);
 shitz=zeros(1,Nt+1);Sc=m;Sm=m;G=m;
+
+%Initalizing state variables
 Lambda(1)=1.73*10^6; 
 Rr(1)=Lambda0/mu_rm; Rm(1)=Lambda0/mu_ms; Rs(1)=Lambda0/mu_sd; m(1)=InitialMerozoites;
 P(1,1)=beta*(gamma_r*Rr(1)+gamma_m*Rm(1)+gamma_s*Rs(1))*m(1);
@@ -125,6 +146,9 @@ end
 para(1)=s2*da/3; para1(1)=para(1);
 para(1)=100*para(1)/(para(1)+Rr(1)+Rm(1)+Rs(1));
 G(1)=0;
+
+%Solving the PDE model, defined by the function 'state' above, using an
+%Euler scheme
 for n=1:Nt
     ac=m(n)/(mStarC+m(n));Sc(n)=ac;
     if n<=Dn0
@@ -156,9 +180,10 @@ IIg=(1-r0)*(da*trapz(Ig));
 G(n+1)=(G(n)+dt*IIg)/(1+dt*mu_g);
 end
 
-t=0:dt:T; t=1/24*t;
+t=0:dt:T; t=t/24;
+%End solving the PDE model
 
-
+%Defining the variable 'G_retard=G(t-seques_time)'
 [Gmax11,IGmax11]=max(G);
 time_delay=seques_time/dt;
 G_retard=(time_delay+1):Nt+1;
@@ -181,17 +206,24 @@ legend('Parasitemia (\%)','Gametocytemia per $\mu{L}$','fontsize',14,...
     'Interpreter','latex','location','southeast')
 
         
-%Ploting Gametocytemia for the PDE and ODE model
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Ploting Gametocytemia for the PDE and ODE model in the same figures for
+%different pRBC stages
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 Scale_PDE=(max(Data(:,2))/max(G));
 figure,
 axes ('fontsize',14)
 hold on
+%We first plot the PDE model's gameto
 plot(t,Scale_PDE*G,'b','LineWidth',2),
+%We now plot the ODE model's gameto (for k=1 pRBC stage)
 plot(t_EDO,G_EDO_Global,PlotStyle{1},'LineWidth',2),
+%Next, we solve and plot the ODE model' gameto for other values k (pRBC stage)
 for IdStage=2:length(VectNbStage)
-    NbStage=VectNbStage(IdStage);
+    NbStage=VectNbStage(IdStage);%number of pRBC stage
+    %Solving the ODE model with the function 'ODE_optimi'
     [G_EDO_Global_0,para_EDO_0,t_EDO_0]=...
-        ODE_optimi(x_data,y_data,InitialMerozoites,r0,NbStage,beta,...
+        ODE_optimi(T,Nt,dt,x_data,y_data,InitialMerozoites,r0,NbStage,beta,...
         Delta0,mStarM,mStarC,gamma_r,gamma_m,gamma_s,mu_m,mu_sd,mu_rm,mu_ms,...
         Lambda0,r);
     plot(t_EDO_0,G_EDO_Global_0,PlotStyle{IdStage},'LineWidth',2), 
@@ -204,16 +236,23 @@ ylabel('Mature Gametocyte per $\mu{L}$','fontsize',18,'Interpreter','latex')
 legend(TextLegendGameto,...
     'fontsize',14,'location','southeast','Interpreter','latex')
 
-%ploting parasitemia
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Ploting parasitemia for the PDE and ODE model in the same figure for
+%different pRBC stages
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 figure,
 axes ('fontsize',14)
 hold on
+%We first plot the PDE model's parasitemia
 plot(t,(max(Data(:,2))/max(G))*10^3*para,'b','LineWidth',2),
+%We now plot the ODE model's parasitemia (for k=1 pRBC stage)
 plot(t_EDO,(max(Data(:,2))/max(G))*10^3*para_EDO,PlotStyle{1},'LineWidth',2),
+%Next, we solve and plot the ODE model' parasitemia for other values k (pRBC stage)
 for IdStage=2:length(VectNbStage)
-    NbStage=VectNbStage(IdStage);
+    NbStage=VectNbStage(IdStage);%number of pRBC stage
+    %Solving the ODE model with the function 'ODE_optimi'
     [G_EDO_Global_0,para_EDO_0,t_EDO_0]=...
-        ODE_optimi(x_data,y_data,InitialMerozoites,r0,NbStage,beta,...
+        ODE_optimi(T,Nt,dt,x_data,y_data,InitialMerozoites,r0,NbStage,beta,...
         Delta0,mStarM,mStarC,gamma_r,gamma_m,gamma_s,mu_m,mu_sd,mu_rm,mu_ms,...
         Lambda0,r);
     plot(t_EDO_0,(max(Data(:,2))/max(G))*10^3*para_EDO_0,PlotStyle{IdStage},'LineWidth',2), 
@@ -226,16 +265,19 @@ legend(TextLegendGameto,...
     'fontsize',14,'location','southeast','Interpreter','latex')
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %Parameters for the link between Gameto and Parasitemia
-%%%%%%%first part of the estimate
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%first part of the estimate (i.e., for t<T0 in eq. 12 of the manuscript)
 eG=log10((max(Data(:,2))/max(G))*G_retard(2:IGmax11)); 
 eP=log10(para(2:IGmax11)); 
 t_data=eP;
-    function output=myfunc1(parameter,t_data)
-        aaop(1)=parameter(1);
-        aaop(2)=parameter(2);
-        output=aaop(2)+ t_data*aaop(1);
-    end
+%Function to be fitted
+function output=myfunc1(parameter,t_data)
+    aaop(1)=parameter(1);
+    aaop(2)=parameter(2);
+    output=aaop(2)+ t_data*aaop(1);
+end
 
 opts = statset('nlinfit');
 opts.RobustWgtFun = 'logistic';
@@ -250,16 +292,17 @@ apG=myfunc1(aaop1,t_data);
 Rsq1 = 1 - sum((eG - apG).^2)/...
     sum((eG - mean(eG)).^2);
 
-%%%%%%%second part of the estimate
+%second part of the estimate (i.e., for t>T0 in eq. 12 of the manuscript)
 eG2=log10((max(Data(:,2))/max(G))*G(IGmax11:IGmax11+2250)); 
 nnl2=length(IGmax11:IGmax11+2250);
 eP2=-log10(para(IGmax11:IGmax11+2250)); 
 t_data=eP2;
-    function output=myfunc2(parameter,t_data)
-        aaop(1)=parameter(1);
-        aaop(2)=parameter(2);
-        output=aaop(1)*t_data+aaop(2);%% PARASITEMIE VS GAMETO
-    end
+%Function to be fitted
+function output=myfunc2(parameter,t_data)
+    aaop(1)=parameter(1);
+    aaop(2)=parameter(2);
+    output=aaop(1)*t_data+aaop(2);
+end
  pol=polyfit(eP2,eG2,1);
 opts = statset('nlinfit');
 opts.RobustWgtFun = 'logistic';
@@ -289,7 +332,9 @@ legend('Ploting Parasitemia VS Gametocyte','Using an estimated formula',...
     'fontsize',14,'location','best')
 
 
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Printing some output on the sceen
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 AlphaG_PDE = (1-r0)*Scale_PDE;
 fprintf(':::::::::::::::::::::::::::::::::::::::::%s.\n', ' '); 
 fprintf('ID = %s.\n',Name); 
